@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { DetectResult, ForgeHost, IdeId, LangId, Project, ProjectInput, SettingsView } from '@shared/types'
-import { HOSTS, IDES, IDE_ORDER, LANGS, LANG_ORDER, TILE_COLORS } from '@shared/meta'
+import type { DetectResult, ForgeHost, IdeId, LangId, PlatformId, Project, ProjectInput, SettingsView } from '@shared/types'
+import { HOSTS, IDES, IDE_ORDER, LANGS, LANG_ORDER, PLATFORMS, PLATFORM_ORDER, TILE_COLORS } from '@shared/meta'
 import { Modal } from './Modal'
 import { ProjectTile } from './Badges'
 import { IconWarn } from './Icons'
 import { errText } from '../lib/format'
+import { normalizeIcon, TILE_ICON } from '../lib/image'
 
 export type ProjectModalMode = { kind: 'new'; path?: string } | { kind: 'edit'; project: Project }
 
@@ -27,6 +28,7 @@ export function ProjectModal({ mode, settings, onSaved, onClose }: Props) {
   const [openTarget, setOpenTarget] = useState(editing?.openTarget ?? '')
   const [color, setColor] = useState(editing?.color ?? TILE_COLORS[Math.floor(Math.random() * TILE_COLORS.length)])
   const [icon, setIcon] = useState<string | undefined>(editing?.iconDataUrl)
+  const [platform, setPlatform] = useState<PlatformId | null>(editing?.platform ?? null)
   const [repoHost, setRepoHost] = useState<RepoChoice>(editing?.repo?.host ?? 'none')
   const [repoPath, setRepoPath] = useState(editing?.repo?.fullPath ?? '')
   const [repoBase, setRepoBase] = useState(editing?.repo?.baseUrl ?? '')
@@ -46,6 +48,7 @@ export function ProjectModal({ mode, settings, onSaved, onClose }: Props) {
       if (!fill) return
       setName(d.suggestedName)
       setLangs(d.langs)
+      setPlatform(d.platform ?? null)
       setIde(d.suggestedIde)
       setOpenTarget(d.targets[d.suggestedIde][0] ?? '')
       if (d.repo) {
@@ -98,7 +101,8 @@ export function ProjectModal({ mode, settings, onSaved, onClose }: Props) {
   const pickImage = async (): Promise<void> => {
     try {
       const img = await window.api.pickImage()
-      if (img) setIcon(img)
+      // Обрезаем прозрачные поля, чтобы картинка заполняла плитку
+      if (img) setIcon(await normalizeIcon(img, TILE_ICON))
     } catch (e) {
       setError(errText(e))
     }
@@ -115,6 +119,7 @@ export function ProjectModal({ mode, settings, onSaved, onClose }: Props) {
       openTarget,
       color,
       iconDataUrl: icon,
+      platform,
       repo: repoHost !== 'none' && repoPath.trim() ? { host: repoHost, baseUrl: repoHost === 'github' ? 'https://github.com' : repoBase, fullPath: repoPath } : undefined
     }
     if (repoHost === 'gitlab' && repoPath.trim() && !repoBase.trim()) {
@@ -219,6 +224,20 @@ export function ProjectModal({ mode, settings, onSaved, onClose }: Props) {
       </div>
 
       <div className="field">
+        <span className="field-label">Платформа{detect?.platform ? <span style={{ fontWeight: 400 }}> · определилась как {PLATFORMS[detect.platform].name}</span> : null}</span>
+        <div className="seg" role="group" aria-label="Платформа">
+          <button type="button" aria-pressed={platform === null} onClick={() => setPlatform(null)}>
+            Нет
+          </button>
+          {PLATFORM_ORDER.map((p) => (
+            <button key={p} type="button" aria-pressed={platform === p} onClick={() => setPlatform(p)} title={PLATFORMS[p].hint}>
+              {PLATFORMS[p].name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="field">
         <span className="field-label">Репозиторий</span>
         <div className="seg" role="group" aria-label="Хостинг">
           {(['none', 'github', 'gitlab'] as RepoChoice[]).map((h) => (
@@ -238,7 +257,7 @@ export function ProjectModal({ mode, settings, onSaved, onClose }: Props) {
       </div>
 
       <div className="row" style={{ gap: 14 }}>
-        <ProjectTile name={name || '?'} color={color} image={icon} size={52} />
+        <ProjectTile name={name || '?'} color={color} image={icon} platform={platform} size={52} />
         <div className="field" style={{ flex: 1 }}>
           <span className="field-label">Иконка</span>
           <div className="row" style={{ flexWrap: 'wrap' }}>

@@ -6,6 +6,9 @@ export type IdeId = 'rider' | 'vs' | 'vscode' | 'androidstudio'
 
 export type ForgeHost = 'github' | 'gitlab'
 
+/** Где работает результат: сайт/сервис, приложение Windows или Android */
+export type PlatformId = 'web' | 'windows' | 'android'
+
 export interface Note {
   id: string
   key: string
@@ -31,6 +34,8 @@ export interface Project {
   /** Что передать IDE, относительно path: .sln, папка с settings.gradle или '' (сама папка) */
   openTarget: string
   color: string
+  /** Целевая платформа: её иконка показывается вместо монограммы. null — не определена */
+  platform?: PlatformId | null
   /** Своя картинка вместо монограммы (data:URL) */
   iconDataUrl?: string
   notes: Note[]
@@ -47,6 +52,7 @@ export interface DetectResult {
   suggestedName: string
   langs: LangId[]
   suggestedIde: IdeId
+  platform?: PlatformId
   /** Кандидаты на openTarget для каждой IDE */
   targets: Record<IdeId, string[]>
   repo?: RepoRef
@@ -100,6 +106,7 @@ export type ThemeMode = 'system' | 'light' | 'dark'
 export interface CustomIcons {
   hosts: Partial<Record<ForgeHost, string>>
   langs: Partial<Record<LangId, string>>
+  platforms: Partial<Record<PlatformId, string>>
 }
 
 /** Настройки в том виде, в котором их видит интерфейс — без самих токенов. */
@@ -111,6 +118,8 @@ export interface SettingsView {
   icons: CustomIcons
   /** Общие папки, в которых лежат проекты */
   scanRoots: string[]
+  /** Версия выравнивания иконок: если меньше текущей, интерфейс перевыравнивает загруженные */
+  iconsVersion: number
 }
 
 export interface SettingsPatch {
@@ -123,6 +132,10 @@ export interface SettingsPatch {
   /** null — вернуть стандартный значок */
   hostIcon?: { host: ForgeHost; dataUrl: string | null }
   langIcon?: { lang: LangId; dataUrl: string | null }
+  platformIcon?: { platform: PlatformId; dataUrl: string | null }
+  /** Заменить все иконки разом (после выравнивания) */
+  icons?: CustomIcons
+  iconsVersion?: number
   scanRoots?: string[]
 }
 

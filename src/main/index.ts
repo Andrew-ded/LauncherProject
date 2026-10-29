@@ -3,12 +3,15 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import type {
-  ActionResult, ContextAction, ForgeHost, IdeId, LangId, Note, Project, ProjectInput, ScanResult, SettingsPatch, SettingsView
+  ActionResult, ContextAction, CustomIcons, ForgeHost, IdeId, LangId, Note, PlatformId, Project, ProjectInput, ScanResult, SettingsPatch, SettingsView
 } from '@shared/types'
-import { IDES, IDE_ORDER, LANGS, TILE_COLORS } from '@shared/meta'
+import { IDES, IDE_ORDER, LANGS, PLATFORMS, TILE_COLORS } from '@shared/meta'
 import { store } from './store'
 import { decrypt, encrypt } from './secrets'
 import { detectFolder, samePathKey, scanRoot } from './detect'
+
+const detectPlatformFor = (folder: string): PlatformId | undefined =>
+  detectFolder(folder, { gitlabBaseUrl: '', hasIde: () => false }).platform
 import { readGitState } from './git'
 import { ideInfos, launchDetached, openTerminal, resetIdeCache, resolveIde } from './ide'
 import { fetchActivity, testConnection } from './forge'
@@ -110,6 +113,7 @@ function getProject(id: string): Project {
 
 const isLang = (x: unknown): x is LangId => typeof x === 'string' && x in LANGS
 const isIde = (x: unknown): x is IdeId => typeof x === 'string' && x in IDES
+const isPlatform = (x: unknown): x is PlatformId => typeof x === 'string' && x in PLATFORMS
 
 /** Приводим ввод из интерфейса к ожидаемой форме, чтобы в projects.json не попало лишнего. */
 function sanitize(input: ProjectInput): Omit<Project, 'id' | 'createdAt' | 'notes'> {
@@ -131,6 +135,7 @@ function sanitize(input: ProjectInput): Omit<Project, 'id' | 'createdAt' | 'note
     ide: isIde(input.ide) ? input.ide : 'vscode',
     openTarget: String(input.openTarget ?? ''),
     color: /^#[0-9a-f]{6}$/i.test(input.color) ? input.color : TILE_COLORS[0],
+    platform: isPlatform(input.platform) ? input.platform : null,
     iconDataUrl: typeof input.iconDataUrl === 'string' && input.iconDataUrl.startsWith('data:image/') ? input.iconDataUrl : undefined,
     repo
   }
@@ -154,8 +159,40 @@ function settingsView(): SettingsView {
     ides: ideInfos(s.ideExe),
     theme: s.theme,
     icons: s.icons,
-    scanRoots: s.scanRoots
+    scanRoots: s.scanRoots,
+    iconsVersion: s.iconsVersion
   }
+}
+
+/** Оставляет в наборе иконок только корректные картинки известных ключей. */
+function sanitizeIcons(x: unknown): CustomIcons {
+  const src = (x ?? {}) as Partial<Record<keyof CustomIcons, Record<string, unknown>>>
+  const pickValid = <K extends string>(obj: Record<string, unknown> | undefined, ok: (k: string) => k is K): Partial<Record<K, string>> =>
+    Object.fromEntries(Object.entries(obj ?? {}).filter(([k, v]) => ok(k) && isIconDataUrl(v))) as Partial<Record<K, string>>
+  return {
+    hosts: pickValid(src.hosts, (k): k is ForgeHost => k === 'github' || k === 'gitlab'),
+    langs: pickValid(src.langs, isLang),
+    platforms: pickValid(src.platforms, isPlatform)
+  }
+}
+
+/**
+ * Проектам, добавленным до появления платформ, определяем её один раз.
+ * null — смотрели, не нашли (больше не ищем, пока не поправят руками).
+ */
+function migratePlatforms(list: Project[]): Project[] {
+  let changed = false
+  for (const p of list) {
+    if (p.platform !== undefined) continue
+    changed = true
+    try {
+      p.platform = existsSync(p.path) ? detectPlatformFor(p.path) ?? null : null
+    } catch {
+      p.platform = null
+    }
+  }
+  if (changed) store.saveProjects(list)
+  return list
 }
 
 /** Применяет тему к окну: Chromium сам переключит prefers-color-scheme в интерфейсе. */
@@ -176,7 +213,7 @@ function tokenFor(host: ForgeHost): string | undefined {
 // ---------- IPC ----------
 
 function registerIpc(): void {
-  ipcMain.handle('projects:list', () => store.projects())
+  ipcMain.handle('projects:list', () => migratePlatforms(store.projects()))
 
   ipcMain.handle('projects:add', (_e, input: ProjectInput) => {
     const list = store.projects()
@@ -384,6 +421,14 @@ function registerIpc(): void {
       else if (isIconDataUrl(dataUrl)) s.icons.langs[lang] = dataUrl
       else throw new Error('Не похоже на картинку или она слишком большая')
     }
+    if (patch.platformIcon && isPlatform(patch.platformIcon.platform)) {
+      const { platform, dataUrl } = patch.platformIcon
+      if (dataUrl === null) delete s.icons.platforms[platform]
+      else if (isIconDataUrl(dataUrl)) s.icons.platforms[platform] = dataUrl
+      else throw new Error('Не похоже на картинку или она слишком большая')
+    }
+    if (patch.icons) s.icons = sanitizeIcons(patch.icons)
+    if (typeof patch.iconsVersion === 'number') s.iconsVersion = patch.iconsVersion
     if (Array.isArray(patch.scanRoots)) {
       const uniq = new Map<string, string>()
       for (const r of patch.scanRoots) if (typeof r === 'string' && r.trim()) uniq.set(samePathKey(r.trim()), r.trim())

@@ -1,4 +1,4 @@
-import type { ForgeHost, IdeId, LangId } from './types'
+import type { ForgeHost, IdeId, LangId, PlatformId } from './types'
 
 export const LANGS: Record<LangId, { name: string; short: string; color: string }> = {
   csharp: { name: 'C#', short: 'C#', color: '#6B3FA0' },
@@ -27,6 +27,14 @@ export const HOSTS: Record<ForgeHost, { name: string; short: string; color: stri
   github: { name: 'GitHub', short: 'GH', color: '#24292F' },
   gitlab: { name: 'GitLab', short: 'GL', color: '#B5401A' }
 }
+
+export const PLATFORMS: Record<PlatformId, { name: string; hint: string }> = {
+  web: { name: 'Web', hint: 'сайт или сервис: ASP.NET Core, фронтенд' },
+  windows: { name: 'Windows', hint: 'WPF, WinForms, Avalonia, служба, Electron' },
+  android: { name: 'Android', hint: 'Gradle-проект с Android-плагином' }
+}
+
+export const PLATFORM_ORDER: PlatformId[] = ['web', 'windows', 'android']
 
 export const TILE_COLORS = ['#2F4B8A', '#1F6F5C', '#8A4B2F', '#4C3F7A', '#9A3412', '#23415E', '#6B5B2E', '#3F3F46']
 

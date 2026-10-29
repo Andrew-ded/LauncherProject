@@ -1,6 +1,6 @@
-import { existsSync, readdirSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readdirSync, readSync } from 'node:fs'
 import { basename, dirname, extname, join, relative, resolve } from 'node:path'
-import type { DetectResult, IdeId, LangId, ScanCandidate } from '@shared/types'
+import type { DetectResult, IdeId, LangId, PlatformId, ScanCandidate } from '@shared/types'
 import { parseRemote, readRemoteUrl } from './git'
 
 // Смотрим содержимое папки и по характерным файлам угадываем язык, IDE и то, что ей открывать.
@@ -138,7 +138,8 @@ export function detectFolder(
     found.push({ file: '.git → origin', meaning: parsed.repo ? `${parsed.repo.baseUrl.replace(/^https?:\/\//, '')}/${parsed.repo.fullPath}` : remote })
   }
 
-  return { path: root, suggestedName, langs: Array.from(langs), suggestedIde, targets, repo, unknownRemote, found }
+  const platform = detectPlatform(root, files)
+  return { path: root, suggestedName, langs: Array.from(langs), suggestedIde, platform, targets, repo, unknownRemote, found }
 }
 
 /** Путь в виде, пригодном для сравнения: без хвостовых слэшей, на Windows — без учёта регистра. */
@@ -171,4 +172,77 @@ export function scanRoot(
     result.push({ ...d, root, alreadyAdded: opts.known.has(samePathKey(folder)) })
   }
   return result
+}
+
+// ---------- Платформа ----------
+
+/** Первые bytes байт файла: для .csproj/gradle/package.json этого с запасом. */
+function head(file: string, bytes = 64 * 1024): string {
+  let fd: number | undefined
+  try {
+    fd = openSync(file, 'r')
+    const buf = Buffer.alloc(bytes)
+    const n = readSync(fd, buf, 0, bytes, 0)
+    return buf.subarray(0, n).toString('utf-8')
+  } catch {
+    return ''
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+}
+
+const WEB_PACKAGES = /"(react|react-dom|vue|svelte|@angular\/core|next|nuxt|vite|@sveltejs\/kit|express|fastify|koa)"\s*:/
+const WINDOWS_PACKAGES = /"(electron|@tauri-apps\/api|electron-builder)"\s*:/
+
+/**
+ * Куда собирается проект: Android, Windows или Web.
+ * Если в папке несколько частей (планшет + сервер), побеждает самая «редкая»:
+ * Android, потом Windows-клиент, потом Web.
+ */
+export function detectPlatform(root: string, files: string[]): PlatformId | undefined {
+  const lower = files.map((f) => f.toLowerCase())
+  const pick = (pred: (f: string) => boolean, limit = 25): string[] => files.filter((_, i) => pred(lower[i])).slice(0, limit)
+  const found = new Set<PlatformId>()
+
+  // Android: манифест или Android-плагин в Gradle
+  if (lower.some((f) => f.endsWith('androidmanifest.xml'))) found.add('android')
+  else {
+    for (const g of pick((f) => /(^|[\\/])build\.gradle(\.kts)?$/.test(f), 10)) {
+      if (/com\.android\.(application|library)|android\s*\{/.test(head(join(root, g)))) {
+        found.add('android')
+        break
+      }
+    }
+  }
+
+  // .NET: по SDK и свойствам проекта
+  for (const p of pick((f) => f.endsWith('.csproj') || f.endsWith('.vbproj') || f.endsWith('.fsproj'))) {
+    const x = head(join(root, p))
+    // Сайт на ASP.NET Core остаётся сайтом, даже если запускается как служба Windows
+    if (/Sdk="Microsoft\.NET\.Sdk\.(Web|BlazorWebAssembly|Razor)"/i.test(x)) {
+      found.add('web')
+      continue
+    }
+    if (
+      /<UseWPF>\s*true|<UseWindowsForms>\s*true|<OutputType>\s*WinExe|Avalonia|Microsoft\.Extensions\.Hosting\.WindowsServices|<TargetFrameworks?>[^<]*-windows|Microsoft\.WindowsDesktop/i.test(x)
+    ) {
+      found.add('windows')
+    }
+    // Старый .NET Framework: System.Web — сайт, остальное — приложение под Windows
+    if (/<TargetFrameworkVersion>\s*v[1-4]\./i.test(x)) found.add(/System\.Web\b/.test(x) ? 'web' : 'windows')
+  }
+  if (lower.some((f) => /(^|[\\/])web\.config$/.test(f)) || existsSync(join(root, 'wwwroot'))) found.add('web')
+
+  // Node: Electron — приложение, фреймворки и серверы — Web
+  for (const p of pick((f) => /(^|[\\/])package\.json$/.test(f), 6)) {
+    const x = head(join(root, p))
+    if (WINDOWS_PACKAGES.test(x)) found.add('windows')
+    else if (WEB_PACKAGES.test(x)) found.add('web')
+  }
+  if (lower.some((f) => /(^|[\\/])index\.html$/.test(f)) && !found.size) found.add('web')
+
+  if (found.has('android')) return 'android'
+  if (found.has('windows')) return 'windows'
+  if (found.has('web')) return 'web'
+  return undefined
 }

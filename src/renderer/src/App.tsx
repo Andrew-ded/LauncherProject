@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ContextAction, GitState, IdeId, Project, RepoActivity, SettingsView } from '@shared/types'
+import type { ContextAction, CustomIcons, GitState, IdeId, Project, RepoActivity, SettingsView } from '@shared/types'
 import { IDES } from '@shared/meta'
 import { ProjectCard } from './components/ProjectCard'
 import { RepoModal } from './components/RepoModal'
@@ -9,6 +9,7 @@ import { SettingsModal } from './components/SettingsModal'
 import { ImportModal } from './components/ImportModal'
 import { IconsContext } from './components/Badges'
 import { IconFolderSearch, IconPlus, IconSearch, IconSettings } from './components/Icons'
+import { BADGE_ICON, normalizeIcon, PLATFORM_ICON, type NormalizeOptions } from './lib/image'
 
 type ModalState =
   | { type: 'repo'; id: string }
@@ -24,6 +25,29 @@ interface Toast {
 }
 
 const api = window.api
+
+/** Текущая версия выравнивания иконок. Поднять, если поменяется алгоритм в lib/image. */
+const ICONS_VERSION = 1
+
+/** Перевыравнивает все загруженные иконки. Картинку, которую не удалось прочитать, оставляет как есть. */
+async function normalizeAll(icons: CustomIcons): Promise<CustomIcons> {
+  const each = async <K extends string>(map: Partial<Record<K, string>>, opts: NormalizeOptions): Promise<Partial<Record<K, string>>> => {
+    const out: Partial<Record<K, string>> = {}
+    for (const [k, v] of Object.entries(map) as [K, string][]) {
+      try {
+        out[k] = await normalizeIcon(v, opts)
+      } catch {
+        out[k] = v
+      }
+    }
+    return out
+  }
+  return {
+    hosts: await each(icons.hosts, BADGE_ICON),
+    langs: await each(icons.langs, BADGE_ICON),
+    platforms: await each(icons.platforms, PLATFORM_ICON)
+  }
+}
 const ACTIVITY_TTL_MS = 3 * 60 * 1000
 const PARALLEL = 4
 
@@ -84,7 +108,16 @@ export function App() {
 
   useEffect(() => {
     void (async () => {
-      const [list, s] = await Promise.all([api.listProjects(), api.getSettings()])
+      const [list, loadedSettings] = await Promise.all([api.listProjects(), api.getSettings()])
+      let s = loadedSettings
+      // Иконки, загруженные до появления выравнивания, приводим к одному размеру один раз
+      if (s.iconsVersion < ICONS_VERSION) {
+        try {
+          s = await api.saveSettings({ icons: await normalizeAll(s.icons), iconsVersion: ICONS_VERSION })
+        } catch {
+          /* не вышло — покажем как есть, попробуем при следующем запуске */
+        }
+      }
       setProjects(list)
       projectsRef.current = list
       setSettings(s)
@@ -120,6 +153,11 @@ export function App() {
   const openFolder = async (p: Project): Promise<void> => {
     const r = await api.openFolder(p.id)
     if (!r.ok) showToast(r.error ?? 'Не удалось открыть папку', true)
+  }
+
+  const openTerminal = async (p: Project): Promise<void> => {
+    const r = await api.openTerminal(p.id)
+    if (!r.ok) showToast(r.error ?? 'Не удалось открыть терминал', true)
   }
 
   const removeProject = async (p: Project): Promise<void> => {
@@ -239,7 +277,7 @@ export function App() {
 
   const current = modal && 'id' in modal ? projects.find((p) => p.id === modal.id) : undefined
 
-  const icons = settings?.icons ?? { hosts: {}, langs: {} }
+  const icons = settings?.icons ?? { hosts: {}, langs: {}, platforms: {} }
 
   return (
     <IconsContext.Provider value={icons}>
@@ -314,6 +352,7 @@ export function App() {
                   onRepo={() => setModal({ type: 'repo', id: p.id })}
                   onNotes={() => setModal({ type: 'notes', id: p.id })}
                   onFolder={() => void openFolder(p)}
+                  onTerminal={() => void openTerminal(p)}
                   onContext={() => void onContext(p)}
                 />
               ))}

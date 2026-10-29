@@ -12,6 +12,7 @@ export interface StoredSettings {
   theme: ThemeMode
   icons: CustomIcons
   scanRoots: string[]
+  iconsVersion: number
   window?: { width: number; height: number; x?: number; y?: number; maximized?: boolean }
 }
 
@@ -20,8 +21,9 @@ const defaultSettings: StoredSettings = {
   gitlab: { baseUrl: '', allowSelfSigned: false },
   ideExe: {},
   theme: 'system',
-  icons: { hosts: {}, langs: {} },
-  scanRoots: []
+  icons: { hosts: {}, langs: {}, platforms: {} },
+  scanRoots: [],
+  iconsVersion: 0
 }
 
 function dataDir(): string {
@@ -66,8 +68,9 @@ export const store = {
       gitlab: { ...defaultSettings.gitlab, ...s.gitlab },
       ideExe: { ...s.ideExe },
       theme: s.theme === 'light' || s.theme === 'dark' ? s.theme : 'system',
-      icons: { hosts: { ...s.icons?.hosts }, langs: { ...s.icons?.langs } },
-      scanRoots: Array.isArray(s.scanRoots) ? s.scanRoots.filter((x) => typeof x === 'string') : []
+      icons: { hosts: { ...s.icons?.hosts }, langs: { ...s.icons?.langs }, platforms: { ...s.icons?.platforms } },
+      scanRoots: Array.isArray(s.scanRoots) ? s.scanRoots.filter((x) => typeof x === 'string') : [],
+      iconsVersion: typeof s.iconsVersion === 'number' ? s.iconsVersion : 0
     }
   },
   saveSettings(s: StoredSettings): void {

@@ -132,3 +132,10 @@ export const IconFolderSearch = (p: P) => (
     <path d="m21 21-2.4-2.4" />
   </Svg>
 )
+
+export const IconTerminal = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="3" />
+    <path d="m7.5 9.5 3 2.5-3 2.5M13 15h4" />
+  </Svg>
+)

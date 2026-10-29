@@ -1,7 +1,7 @@
 import type { GitState, Project, RepoActivity } from '@shared/types'
 import { IDES } from '@shared/meta'
 import { HostBadge, LangBadge, ProjectTile } from './Badges'
-import { IconBranch, IconFolder, IconIssue, IconNotes, IconPr, IconWarn } from './Icons'
+import { IconBranch, IconFolder, IconIssue, IconNotes, IconPr, IconTerminal, IconWarn } from './Icons'
 import { count } from '../lib/format'
 
 interface Props {
@@ -14,10 +14,11 @@ interface Props {
   onRepo: () => void
   onNotes: () => void
   onFolder: () => void
+  onTerminal: () => void
   onContext: () => void
 }
 
-export function ProjectCard({ project: p, git, activity, loading, launching, onOpen, onRepo, onNotes, onFolder, onContext }: Props) {
+export function ProjectCard({ project: p, git, activity, loading, launching, onOpen, onRepo, onNotes, onFolder, onTerminal, onContext }: Props) {
   const notesCount = p.notes.length
 
   return (
@@ -31,8 +32,8 @@ export function ProjectCard({ project: p, git, activity, loading, launching, onO
       {/* Клик по любому месту блока открывает проект в его IDE */}
       <button type="button" className="card-hit" aria-label={`Открыть ${p.name} в ${IDES[p.ide].name}`} title={`Открыть в ${IDES[p.ide].name}`} onClick={onOpen} />
 
-      <div className="card-top">
-        <ProjectTile name={p.name} color={p.color} image={p.iconDataUrl} />
+      <div className="card-top" title={p.path}>
+        <ProjectTile name={p.name} color={p.color} image={p.iconDataUrl} platform={p.platform} />
         <div className="card-titles">
           <div className="card-name-row">
             <span className="card-name">{p.name}</span>
@@ -40,9 +41,6 @@ export function ProjectCard({ project: p, git, activity, loading, launching, onO
               <LangBadge key={l} lang={l} />
             ))}
           </div>
-          <span className="card-path" title={p.path}>
-            {p.path}
-          </span>
         </div>
         {git?.branch && (
           <span className="branch" title={git.detached ? `Detached HEAD: ${git.branch}` : `Ветка: ${git.branch}`}>
@@ -83,6 +81,9 @@ export function ProjectCard({ project: p, git, activity, loading, launching, onO
         </button>
         <button type="button" className="icon-btn" onClick={onFolder} aria-label={`Открыть папку ${p.name} в проводнике`} title="Открыть в проводнике">
           <IconFolder size={19} />
+        </button>
+        <button type="button" className="icon-btn" onClick={onTerminal} aria-label={`Открыть терминал в папке ${p.name}`} title="Терминал в папке проекта">
+          <IconTerminal size={19} />
         </button>
       </div>
     </div>

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { ForgeHost, IdeId, LangId, SettingsPatch, SettingsView, ThemeMode } from '@shared/types'
-import { HOSTS, LANGS, LANG_ORDER } from '@shared/meta'
+import type { ForgeHost, IdeId, LangId, PlatformId, SettingsPatch, SettingsView, ThemeMode } from '@shared/types'
+import { HOSTS, LANGS, LANG_ORDER, PLATFORMS, PLATFORM_ORDER } from '@shared/meta'
 import { Modal } from './Modal'
 import { HostBadge, LangBadge } from './Badges'
 import { IconFolder, IconTrash, IconWarn } from './Icons'
 import { errText } from '../lib/format'
+import { BADGE_ICON, normalizeIcon, PLATFORM_ICON } from '../lib/image'
 
 interface Props {
   settings: SettingsView
@@ -88,11 +89,19 @@ export function SettingsModal({ settings, onSaved, onImport, onClose }: Props) {
     if (p) setExe((x) => ({ ...x, [id]: p }))
   }
 
-  const uploadIcon = async (target: { host: ForgeHost } | { lang: LangId }): Promise<void> => {
+  const uploadIcon = async (target: { host: ForgeHost } | { lang: LangId } | { platform: PlatformId }): Promise<void> => {
     try {
-      const dataUrl = await window.api.pickImage()
-      if (!dataUrl) return
-      await apply('host' in target ? { hostIcon: { host: target.host, dataUrl } } : { langIcon: { lang: target.lang, dataUrl } })
+      const raw = await window.api.pickImage()
+      if (!raw) return
+      // Обрезаем прозрачные поля и вписываем в квадрат: все иконки выглядят одного размера
+      const dataUrl = await normalizeIcon(raw, 'platform' in target ? PLATFORM_ICON : BADGE_ICON)
+      await apply(
+        'host' in target
+          ? { hostIcon: { host: target.host, dataUrl } }
+          : 'lang' in target
+            ? { langIcon: { lang: target.lang, dataUrl } }
+            : { platformIcon: { platform: target.platform, dataUrl } }
+      )
     } catch (e) {
       setError(errText(e))
     }
@@ -209,8 +218,28 @@ export function SettingsModal({ settings, onSaved, onImport, onClose }: Props) {
       {/* ---------- Иконки ---------- */}
       <h3 className="section-title" style={{ marginTop: 8 }}>Иконки</h3>
       <span className="field-hint" style={{ marginTop: -10 }}>
-        Свои картинки вместо буквенных значков: PNG, SVG или ICO, лучше квадратные и до 512 КБ.
+        PNG, SVG или ICO до 512 КБ. Прозрачные поля обрезаются, и картинка вписывается в квадрат с одинаковым отступом, поэтому все иконки выглядят одного размера.
       </span>
+      <span className="field-label">Платформы — встают на плитку проекта вместо цвета и букв</span>
+      <div className="icon-list">
+        {PLATFORM_ORDER.map((p) =>
+          iconRow(
+            p,
+            `${PLATFORMS[p].name} · ${PLATFORMS[p].hint}`,
+            s.icons.platforms[p] ? (
+              <img className="badge-img" src={s.icons.platforms[p]} alt="" style={{ width: 30, height: 30 }} />
+            ) : (
+              <span className="badge platform-empty" style={{ width: 30, height: 30, fontSize: 11 }}>
+                {PLATFORMS[p].name.slice(0, 3)}
+              </span>
+            ),
+            !!s.icons.platforms[p],
+            () => uploadIcon({ platform: p }),
+            () => apply({ platformIcon: { platform: p, dataUrl: null } })
+          )
+        )}
+      </div>
+      <span className="field-label">Хостинги и языки</span>
       <div className="icon-list">
         {(['github', 'gitlab'] as ForgeHost[]).map((h) =>
           iconRow(

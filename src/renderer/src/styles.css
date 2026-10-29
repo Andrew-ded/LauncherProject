@@ -174,8 +174,8 @@ button:disabled { cursor: default; opacity: 0.5; }
 .card-top, .card-bottom > :not(button) { pointer-events: none; }
 .card-bottom button { position: relative; z-index: 2; }
 
-.card-top { display: flex; align-items: flex-start; gap: 12px; }
-.card-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; padding-top: 2px; }
+.card-top { display: flex; align-items: center; gap: 12px; min-height: 46px; }
+.card-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .card-name-row { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
 .card-name-row .badge { margin-top: 0; }
 /* Длинное название переносится на вторую строку, а не режется многоточием */
@@ -379,3 +379,4 @@ select.input { padding-right: 8px; }
 .import-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .import-name .nm { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .import-path { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge.platform-empty { background: var(--chip); color: var(--muted-2); border: 1.5px dashed var(--line-strong); box-shadow: none; }

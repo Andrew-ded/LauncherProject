@@ -24,6 +24,7 @@ function toInput(c: ScanCandidate, color: string): ProjectInput {
     ide: c.suggestedIde,
     openTarget: c.targets[c.suggestedIde][0] ?? '',
     color,
+    platform: c.platform ?? null,
     repo: c.repo
   }
 }
@@ -189,7 +190,7 @@ export function ImportModal({ settings, onSettings, onImported, onClose }: Props
             {candidates.map((c, i) => (
               <label key={c.path} className={`import-row${c.alreadyAdded ? ' done' : ''}`}>
                 <input type="checkbox" checked={c.alreadyAdded || selected.has(c.path)} disabled={c.alreadyAdded} onChange={() => toggle(c.path)} />
-                <ProjectTile name={c.suggestedName} color={colorAt(i)} size={36} />
+                <ProjectTile name={c.suggestedName} color={colorAt(i)} platform={c.platform} size={36} />
                 <span className="import-txt">
                   <span className="import-name">
                     <span className="nm">{c.suggestedName}</span>

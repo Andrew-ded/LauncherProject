@@ -67,7 +67,7 @@ export function NotesModal({ project, onSaved, onToast, onClose }: Props) {
     <Modal
       title="Заметки"
       subtitle={project.name}
-      icon={<ProjectTile name={project.name} color={project.color} image={project.iconDataUrl} size={32} />}
+      icon={<ProjectTile name={project.name} color={project.color} image={project.iconDataUrl} platform={project.platform} size={32} />}
       width={600}
       onClose={onClose}
     >
