@@ -1,19 +1,26 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, screen, session, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, screen, session, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import type {
-  ActionResult, ContextAction, ForgeHost, IdeId, LangId, Note, Project, ProjectInput, SettingsPatch, SettingsView
+  ActionResult, ContextAction, ForgeHost, IdeId, LangId, Note, Project, ProjectInput, ScanResult, SettingsPatch, SettingsView
 } from '@shared/types'
 import { IDES, IDE_ORDER, LANGS, TILE_COLORS } from '@shared/meta'
 import { store } from './store'
 import { decrypt, encrypt } from './secrets'
-import { detectFolder } from './detect'
+import { detectFolder, samePathKey, scanRoot } from './detect'
 import { readGitState } from './git'
 import { ideInfos, launchDetached, openTerminal, resetIdeCache, resolveIde } from './ide'
 import { fetchActivity, testConnection } from './forge'
 
 let win: BrowserWindow | null = null
+
+const BG_LIGHT = '#F6F3EC'
+const BG_DARK = '#171613'
+const windowBg = (): string => (nativeTheme.shouldUseDarkColors ? BG_DARK : BG_LIGHT)
+
+/** Картинка-иконка: только data:image и не больше ~700 КБ в base64. */
+const isIconDataUrl = (x: unknown): x is string => typeof x === 'string' && /^data:image\/[\w.+-]+;base64,/.test(x) && x.length < 700_000
 
 // ---------- Окно ----------
 
@@ -32,7 +39,7 @@ function createWindow(): void {
     y: visible ? saved?.y : undefined,
     minWidth: 640,
     minHeight: 480,
-    backgroundColor: '#F6F3EC',
+    backgroundColor: windowBg(),
     title: 'Project Launcher',
     autoHideMenuBar: true,
     show: false,
@@ -144,8 +151,21 @@ function settingsView(): SettingsView {
   return {
     github: { hasToken: !!decrypt(s.github.tokenEnc) },
     gitlab: { baseUrl: s.gitlab.baseUrl, hasToken: !!decrypt(s.gitlab.tokenEnc), allowSelfSigned: s.gitlab.allowSelfSigned },
-    ides: ideInfos(s.ideExe)
+    ides: ideInfos(s.ideExe),
+    theme: s.theme,
+    icons: s.icons,
+    scanRoots: s.scanRoots
   }
+}
+
+/** Применяет тему к окну: Chromium сам переключит prefers-color-scheme в интерфейсе. */
+function applyTheme(): void {
+  nativeTheme.themeSource = store.settings().theme
+  win?.setBackgroundColor(windowBg())
+}
+
+function newProject(input: ProjectInput): Project {
+  return { ...sanitize(input), id: randomUUID(), notes: sanitizeNotes(input.notes), createdAt: new Date().toISOString() }
 }
 
 function tokenFor(host: ForgeHost): string | undefined {
@@ -160,15 +180,51 @@ function registerIpc(): void {
 
   ipcMain.handle('projects:add', (_e, input: ProjectInput) => {
     const list = store.projects()
-    const project: Project = {
-      ...sanitize(input),
-      id: randomUUID(),
-      notes: sanitizeNotes(input.notes),
-      createdAt: new Date().toISOString()
-    }
+    const project = newProject(input)
     list.push(project)
     store.saveProjects(list)
     return project
+  })
+
+  // Пакетное добавление после импорта из общей папки. Дубликаты по пути пропускаем.
+  ipcMain.handle('projects:addMany', (_e, inputs: ProjectInput[]) => {
+    if (!Array.isArray(inputs)) throw new Error('Пустой список')
+    const list = store.projects()
+    const known = new Set(list.map((p) => samePathKey(p.path)))
+    const added: Project[] = []
+    for (const input of inputs) {
+      const key = samePathKey(String(input?.path ?? ''))
+      if (known.has(key)) continue
+      const p = newProject(input)
+      known.add(key)
+      added.push(p)
+      list.push(p)
+    }
+    store.saveProjects(list)
+    return added
+  })
+
+  ipcMain.handle('scan:roots', (_e, roots: string[]): ScanResult => {
+    const s = store.settings()
+    const known = new Set(store.projects().map((p) => samePathKey(p.path)))
+    const opts = { gitlabBaseUrl: s.gitlab.baseUrl, hasIde: (id: IdeId) => !!resolveIde(id, s.ideExe), known }
+    const result: ScanResult = { candidates: [], errors: [] }
+    const seen = new Set<string>()
+    for (const root of Array.isArray(roots) ? roots : []) {
+      try {
+        if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error('Папка не найдена')
+        for (const c of scanRoot(root, opts)) {
+          const key = samePathKey(c.path)
+          if (seen.has(key)) continue
+          seen.add(key)
+          result.candidates.push(c)
+        }
+      } catch (e) {
+        result.errors.push({ root, error: e instanceof Error ? e.message : String(e) })
+      }
+    }
+    result.candidates.sort((a, b) => a.suggestedName.localeCompare(b.suggestedName, 'ru'))
+    return result
   })
 
   ipcMain.handle('projects:update', (_e, id: string, input: ProjectInput) => {
@@ -315,7 +371,26 @@ function registerIpc(): void {
       }
       resetIdeCache()
     }
+    if (patch.theme === 'system' || patch.theme === 'light' || patch.theme === 'dark') s.theme = patch.theme
+    if (patch.hostIcon && (patch.hostIcon.host === 'github' || patch.hostIcon.host === 'gitlab')) {
+      const { host, dataUrl } = patch.hostIcon
+      if (dataUrl === null) delete s.icons.hosts[host]
+      else if (isIconDataUrl(dataUrl)) s.icons.hosts[host] = dataUrl
+      else throw new Error('Не похоже на картинку или она слишком большая')
+    }
+    if (patch.langIcon && isLang(patch.langIcon.lang)) {
+      const { lang, dataUrl } = patch.langIcon
+      if (dataUrl === null) delete s.icons.langs[lang]
+      else if (isIconDataUrl(dataUrl)) s.icons.langs[lang] = dataUrl
+      else throw new Error('Не похоже на картинку или она слишком большая')
+    }
+    if (Array.isArray(patch.scanRoots)) {
+      const uniq = new Map<string, string>()
+      for (const r of patch.scanRoots) if (typeof r === 'string' && r.trim()) uniq.set(samePathKey(r.trim()), r.trim())
+      s.scanRoots = Array.from(uniq.values())
+    }
     store.saveSettings(s)
+    if (patch.theme) applyTheme()
     return settingsView()
   })
 
@@ -338,6 +413,9 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null)
+    nativeTheme.themeSource = store.settings().theme
+    // Тема «как в системе»: система переключилась — перекрашиваем фон окна под неё
+    nativeTheme.on('updated', () => win?.setBackgroundColor(windowBg()))
     applyCertPolicy()
     registerIpc()
     createWindow()

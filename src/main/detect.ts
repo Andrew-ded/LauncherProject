@@ -1,6 +1,6 @@
-import { readdirSync } from 'node:fs'
-import { basename, dirname, extname, join, relative } from 'node:path'
-import type { DetectResult, IdeId, LangId } from '@shared/types'
+import { existsSync, readdirSync } from 'node:fs'
+import { basename, dirname, extname, join, relative, resolve } from 'node:path'
+import type { DetectResult, IdeId, LangId, ScanCandidate } from '@shared/types'
 import { parseRemote, readRemoteUrl } from './git'
 
 // Смотрим содержимое папки и по характерным файлам угадываем язык, IDE и то, что ей открывать.
@@ -139,4 +139,36 @@ export function detectFolder(
   }
 
   return { path: root, suggestedName, langs: Array.from(langs), suggestedIde, targets, repo, unknownRemote, found }
+}
+
+/** Путь в виде, пригодном для сравнения: без хвостовых слэшей, на Windows — без учёта регистра. */
+export function samePathKey(p: string): string {
+  const r = resolve(p).replace(/[\\/]+$/, '')
+  return process.platform === 'win32' ? r.toLowerCase() : r
+}
+
+/**
+ * Обходит подпапки общей папки (один уровень вглубь) и возвращает те, что похожи на проект:
+ * нашёлся язык, .git или remote.
+ */
+export function scanRoot(
+  root: string,
+  opts: { gitlabBaseUrl: string; hasIde: (id: IdeId) => boolean; known: Set<string> }
+): ScanCandidate[] {
+  const entries = readdirSync(root, { withFileTypes: true })
+  const result: ScanCandidate[] = []
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.') || e.name.startsWith('$') || SKIP_DIRS.has(e.name)) continue
+    const folder = join(root, e.name)
+    let d: DetectResult
+    try {
+      d = detectFolder(folder, opts)
+    } catch {
+      continue // нет доступа к подпапке — просто пропускаем
+    }
+    const looksLikeProject = d.langs.length > 0 || !!d.repo || !!d.unknownRemote || existsSync(join(folder, '.git'))
+    if (!looksLikeProject) continue
+    result.push({ ...d, root, alreadyAdded: opts.known.has(samePathKey(folder)) })
+  }
+  return result
 }

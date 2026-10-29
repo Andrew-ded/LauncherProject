@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { IdeId, Project } from '@shared/types'
+import type { CustomIcons, IdeId, Project, ThemeMode } from '@shared/types'
 
 // Всё хранится в %APPDATA%\project-launcher — переживает перенос portable-exe.
 
@@ -9,13 +9,19 @@ export interface StoredSettings {
   github: { tokenEnc?: string }
   gitlab: { baseUrl: string; tokenEnc?: string; allowSelfSigned: boolean }
   ideExe: Partial<Record<IdeId, string>>
+  theme: ThemeMode
+  icons: CustomIcons
+  scanRoots: string[]
   window?: { width: number; height: number; x?: number; y?: number; maximized?: boolean }
 }
 
 const defaultSettings: StoredSettings = {
   github: {},
   gitlab: { baseUrl: '', allowSelfSigned: false },
-  ideExe: {}
+  ideExe: {},
+  theme: 'system',
+  icons: { hosts: {}, langs: {} },
+  scanRoots: []
 }
 
 function dataDir(): string {
@@ -58,7 +64,10 @@ export const store = {
       ...s,
       github: { ...defaultSettings.github, ...s.github },
       gitlab: { ...defaultSettings.gitlab, ...s.gitlab },
-      ideExe: { ...s.ideExe }
+      ideExe: { ...s.ideExe },
+      theme: s.theme === 'light' || s.theme === 'dark' ? s.theme : 'system',
+      icons: { hosts: { ...s.icons?.hosts }, langs: { ...s.icons?.langs } },
+      scanRoots: Array.isArray(s.scanRoots) ? s.scanRoots.filter((x) => typeof x === 'string') : []
     }
   },
   saveSettings(s: StoredSettings): void {

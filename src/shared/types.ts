@@ -94,11 +94,23 @@ export interface IdeInfo {
   auto: boolean
 }
 
+export type ThemeMode = 'system' | 'light' | 'dark'
+
+/** Свои картинки вместо буквенных значков (data:URL). */
+export interface CustomIcons {
+  hosts: Partial<Record<ForgeHost, string>>
+  langs: Partial<Record<LangId, string>>
+}
+
 /** Настройки в том виде, в котором их видит интерфейс — без самих токенов. */
 export interface SettingsView {
   github: { hasToken: boolean }
   gitlab: { baseUrl: string; hasToken: boolean; allowSelfSigned: boolean }
   ides: IdeInfo[]
+  theme: ThemeMode
+  icons: CustomIcons
+  /** Общие папки, в которых лежат проекты */
+  scanRoots: string[]
 }
 
 export interface SettingsPatch {
@@ -107,6 +119,24 @@ export interface SettingsPatch {
   gitlabBaseUrl?: string
   gitlabAllowSelfSigned?: boolean
   ideExe?: Partial<Record<IdeId, string>>
+  theme?: ThemeMode
+  /** null — вернуть стандартный значок */
+  hostIcon?: { host: ForgeHost; dataUrl: string | null }
+  langIcon?: { lang: LangId; dataUrl: string | null }
+  scanRoots?: string[]
+}
+
+/** Проект, найденный при сканировании общей папки. */
+export interface ScanCandidate extends DetectResult {
+  root: string
+  /** Уже есть в лаунчере (совпал путь) */
+  alreadyAdded: boolean
+}
+
+export interface ScanResult {
+  candidates: ScanCandidate[]
+  /** Папки, которые не удалось прочитать */
+  errors: { root: string; error: string }[]
 }
 
 export type ContextAction = 'edit' | 'delete' | 'copyPath' | 'openTerminal' | `ide:${IdeId}`
@@ -120,6 +150,7 @@ export interface ActionResult {
 export interface LauncherApi {
   listProjects(): Promise<Project[]>
   addProject(input: ProjectInput): Promise<Project>
+  addProjects(inputs: ProjectInput[]): Promise<Project[]>
   updateProject(id: string, input: ProjectInput): Promise<Project>
   deleteProject(id: string): Promise<void>
   setNotes(id: string, notes: Note[]): Promise<void>
@@ -127,6 +158,8 @@ export interface LauncherApi {
   pickFolder(): Promise<string | null>
   pickImage(): Promise<string | null>
   detect(folder: string): Promise<DetectResult>
+  /** Ищет проекты в подпапках указанных общих папок */
+  scanRoots(roots: string[]): Promise<ScanResult>
   gitState(id: string): Promise<GitState>
   gitStates(): Promise<Record<string, GitState>>
 

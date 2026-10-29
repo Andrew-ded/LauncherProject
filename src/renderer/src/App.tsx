@@ -6,13 +6,16 @@ import { RepoModal } from './components/RepoModal'
 import { NotesModal } from './components/NotesModal'
 import { ProjectModal, type ProjectModalMode } from './components/ProjectModal'
 import { SettingsModal } from './components/SettingsModal'
-import { IconPlus, IconSearch, IconSettings } from './components/Icons'
+import { ImportModal } from './components/ImportModal'
+import { IconsContext } from './components/Badges'
+import { IconFolderSearch, IconPlus, IconSearch, IconSettings } from './components/Icons'
 
 type ModalState =
   | { type: 'repo'; id: string }
   | { type: 'notes'; id: string }
   | { type: 'project'; mode: ProjectModalMode }
   | { type: 'settings' }
+  | { type: 'import' }
   | null
 
 interface Toast {
@@ -155,6 +158,19 @@ export function App() {
     })
   }
 
+  const onImported = (added: Project[]): void => {
+    setModal(null)
+    if (!added.length) return
+    setProjects((list) => {
+      const next = [...list, ...added]
+      projectsRef.current = next
+      return next
+    })
+    showToast(`Добавлено проектов: ${added.length}`)
+    void refreshGit()
+    void refreshActivity(added.filter((p) => p.repo).map((p) => p.id))
+  }
+
   // ---------- Поиск и клавиатура ----------
 
   const visible = useMemo(() => {
@@ -223,7 +239,10 @@ export function App() {
 
   const current = modal && 'id' in modal ? projects.find((p) => p.id === modal.id) : undefined
 
+  const icons = settings?.icons ?? { hosts: {}, langs: {} }
+
   return (
+    <IconsContext.Provider value={icons}>
     <div className={`app${dragging ? ' dragging' : ''}`}>
       <header className="topbar">
         <div className="brand">
@@ -246,6 +265,9 @@ export function App() {
           <span className="kbd">Ctrl K</span>
         </label>
         <div className="topbar-actions">
+          <button type="button" className="icon-btn lg" aria-label="Найти проекты в папках" title="Найти проекты в папках" onClick={() => setModal({ type: 'import' })}>
+            <IconFolderSearch size={19} />
+          </button>
           <button type="button" className="icon-btn lg" aria-label="Настройки" title="Настройки" onClick={() => setModal({ type: 'settings' })}>
             <IconSettings size={19} />
           </button>
@@ -260,11 +282,17 @@ export function App() {
         {loaded && projects.length === 0 ? (
           <div className="empty">
             <h2>Здесь пока пусто</h2>
-            <span>Перетащи папку проекта в окно или добавь её кнопкой — язык, IDE и репозиторий подтянутся сами.</span>
-            <button type="button" className="btn btn-dark" onClick={() => setModal({ type: 'project', mode: { kind: 'new' } })}>
-              <IconPlus size={16} />
-              Добавить проект
-            </button>
+            <span>Укажи общую папку, где лежат проекты, — лаунчер сам их найдёт. Или перетащи папку одного проекта в окно.</span>
+            <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-dark" onClick={() => setModal({ type: 'import' })}>
+                <IconFolderSearch size={17} />
+                Найти проекты в папке
+              </button>
+              <button type="button" className="btn btn-line" onClick={() => setModal({ type: 'project', mode: { kind: 'new' } })}>
+                <IconPlus size={16} />
+                Добавить один
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -323,12 +351,18 @@ export function App() {
       {modal?.type === 'settings' && settings && (
         <SettingsModal
           settings={settings}
-          onSaved={(s) => {
-            setSettings(s)
+          onSaved={setSettings}
+          onImport={() => setModal({ type: 'import' })}
+          onClose={() => {
+            setModal(null)
+            // Токены или адрес могли поменяться — перечитываем PR/Issue
             void refreshActivity()
           }}
-          onClose={() => setModal(null)}
         />
+      )}
+
+      {modal?.type === 'import' && settings && (
+        <ImportModal settings={settings} onSettings={setSettings} onImported={onImported} onClose={() => setModal(null)} />
       )}
 
       {toast && (
@@ -337,6 +371,7 @@ export function App() {
         </div>
       )}
     </div>
+    </IconsContext.Provider>
   )
 }
 

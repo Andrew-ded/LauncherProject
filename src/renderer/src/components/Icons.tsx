@@ -124,3 +124,11 @@ export const IconCode = (p: P) => (
     <path d="m8 8-4 4 4 4M16 8l4 4-4 4" />
   </Svg>
 )
+
+export const IconFolderSearch = (p: P) => (
+  <Svg {...p}>
+    <path d="M10 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2.5" />
+    <circle cx="16.5" cy="16.5" r="3" />
+    <path d="m21 21-2.4-2.4" />
+  </Svg>
+)

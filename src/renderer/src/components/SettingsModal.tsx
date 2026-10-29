@@ -1,18 +1,29 @@
-import { useState } from 'react'
-import type { ForgeHost, IdeId, SettingsPatch, SettingsView } from '@shared/types'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { ForgeHost, IdeId, LangId, SettingsPatch, SettingsView, ThemeMode } from '@shared/types'
+import { HOSTS, LANGS, LANG_ORDER } from '@shared/meta'
 import { Modal } from './Modal'
-import { HostBadge } from './Badges'
-import { IconWarn } from './Icons'
+import { HostBadge, LangBadge } from './Badges'
+import { IconFolder, IconTrash, IconWarn } from './Icons'
 import { errText } from '../lib/format'
 
 interface Props {
   settings: SettingsView
   onSaved: (s: SettingsView) => void
+  onImport: () => void
   onClose: () => void
 }
 
-/** Токены GitHub/GitLab, адрес GitLab и пути к IDE. Токены хранятся зашифрованными, обратно в окно не отдаются. */
-export function SettingsModal({ settings, onSaved, onClose }: Props) {
+const THEMES: { id: ThemeMode; label: string }[] = [
+  { id: 'system', label: 'Как в системе' },
+  { id: 'light', label: 'Светлая' },
+  { id: 'dark', label: 'Тёмная' }
+]
+
+/**
+ * Настройки. Тема, иконки и папки применяются сразу, по клику.
+ * Токены, адрес GitLab и пути IDE — по кнопке «Сохранить». Токены обратно в окно не отдаются.
+ */
+export function SettingsModal({ settings, onSaved, onImport, onClose }: Props) {
   const [s, setS] = useState(settings)
   const [ghToken, setGhToken] = useState('')
   const [glToken, setGlToken] = useState('')
@@ -22,8 +33,15 @@ export function SettingsModal({ settings, onSaved, onClose }: Props) {
     Object.fromEntries(settings.ides.filter((i) => !i.auto && i.exe).map((i) => [i.id, i.exe!]))
   )
   const [test, setTest] = useState<Partial<Record<ForgeHost, { ok: boolean; text: string }>>>({})
+  const [allLangs, setAllLangs] = useState(false)
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const errorRef = useRef<HTMLDivElement>(null)
+
+  // Ошибка рисуется внизу окна — прокручиваем к ней, чтобы не пропустить
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [error])
 
   const apply = async (patch: SettingsPatch): Promise<SettingsView | undefined> => {
     setError(undefined)
@@ -70,6 +88,21 @@ export function SettingsModal({ settings, onSaved, onClose }: Props) {
     if (p) setExe((x) => ({ ...x, [id]: p }))
   }
 
+  const uploadIcon = async (target: { host: ForgeHost } | { lang: LangId }): Promise<void> => {
+    try {
+      const dataUrl = await window.api.pickImage()
+      if (!dataUrl) return
+      await apply('host' in target ? { hostIcon: { host: target.host, dataUrl } } : { langIcon: { lang: target.lang, dataUrl } })
+    } catch (e) {
+      setError(errText(e))
+    }
+  }
+
+  const addRoot = async (): Promise<void> => {
+    const folder = await window.api.pickFolder()
+    if (folder) await apply({ scanRoots: [...s.scanRoots, folder] })
+  }
+
   const tokenBlock = (host: ForgeHost, has: boolean, value: string, set: (v: string) => void) => (
     <div className="field">
       <span className="field-label">Токен</span>
@@ -80,7 +113,7 @@ export function SettingsModal({ settings, onSaved, onClose }: Props) {
           value={value}
           onChange={(e) => set(e.target.value)}
           placeholder={has ? 'Сохранён — введи новый, чтобы заменить' : host === 'github' ? 'ghp_… (scope: repo для приватных)' : 'glpat-… (scope: read_api)'}
-          aria-label={`Токен ${host === 'github' ? 'GitHub' : 'GitLab'}`}
+          aria-label={`Токен ${HOSTS[host].name}`}
         />
         <button type="button" className="btn btn-line" onClick={() => runTest(host)}>
           Проверить
@@ -99,6 +132,25 @@ export function SettingsModal({ settings, onSaved, onClose }: Props) {
     </div>
   )
 
+  const iconRow = (key: string, label: string, badge: ReactNode, custom: boolean, onUpload: () => void, onReset: () => void) => (
+    <div className="icon-row" key={key}>
+      <span className="icon-preview">{badge}</span>
+      <span className="icon-name">{label}</span>
+      <span className="icon-actions">
+        <button type="button" className="btn btn-line btn-sm" onClick={onUpload}>
+          {custom ? 'Заменить…' : 'Загрузить…'}
+        </button>
+        {custom && (
+          <button type="button" className="btn btn-soft btn-sm" onClick={onReset}>
+            Сбросить
+          </button>
+        )}
+      </span>
+    </div>
+  )
+
+  const langsToShow = allLangs ? LANG_ORDER : LANG_ORDER.filter((l) => ['csharp', 'kotlin', 'typescript', 'javascript'].includes(l) || s.icons.langs[l])
+
   return (
     <Modal
       title="Настройки"
@@ -115,7 +167,80 @@ export function SettingsModal({ settings, onSaved, onClose }: Props) {
         </>
       }
     >
+      {/* ---------- Оформление ---------- */}
+      <h3 className="section-title">Тема</h3>
+      <div className="seg" role="group" aria-label="Тема">
+        {THEMES.map((t) => (
+          <button key={t.id} type="button" aria-pressed={s.theme === t.id} onClick={() => apply({ theme: t.id })}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ---------- Папки с проектами ---------- */}
+      <h3 className="section-title" style={{ marginTop: 8 }}>Папки с проектами</h3>
+      <span className="field-hint" style={{ marginTop: -10 }}>
+        Общие папки, где лежат проекты. Лаунчер просмотрит их подпапки и предложит добавить найденное.
+      </span>
+      {s.scanRoots.length > 0 && (
+        <div className="root-list">
+          {s.scanRoots.map((r) => (
+            <div className="root-row" key={r}>
+              <IconFolder size={16} />
+              <span className="mono grow" title={r}>
+                {r}
+              </span>
+              <button type="button" className="icon-btn" aria-label={`Убрать папку ${r}`} title="Убрать" onClick={() => apply({ scanRoots: s.scanRoots.filter((x) => x !== r) })}>
+                <IconTrash size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="row">
+        <button type="button" className="btn btn-line btn-sm" onClick={addRoot}>
+          Добавить папку…
+        </button>
+        <button type="button" className="btn btn-dark btn-sm" onClick={onImport} disabled={!s.scanRoots.length}>
+          Найти проекты
+        </button>
+      </div>
+
+      {/* ---------- Иконки ---------- */}
+      <h3 className="section-title" style={{ marginTop: 8 }}>Иконки</h3>
+      <span className="field-hint" style={{ marginTop: -10 }}>
+        Свои картинки вместо буквенных значков: PNG, SVG или ICO, лучше квадратные и до 512 КБ.
+      </span>
+      <div className="icon-list">
+        {(['github', 'gitlab'] as ForgeHost[]).map((h) =>
+          iconRow(
+            h,
+            HOSTS[h].name,
+            <HostBadge host={h} size={28} />,
+            !!s.icons.hosts[h],
+            () => uploadIcon({ host: h }),
+            () => apply({ hostIcon: { host: h, dataUrl: null } })
+          )
+        )}
+        {langsToShow.map((l) =>
+          iconRow(
+            l,
+            LANGS[l].name,
+            <LangBadge lang={l} size={28} />,
+            !!s.icons.langs[l],
+            () => uploadIcon({ lang: l }),
+            () => apply({ langIcon: { lang: l, dataUrl: null } })
+          )
+        )}
+      </div>
+      {!allLangs && (
+        <button type="button" className="btn btn-soft btn-sm" style={{ alignSelf: 'flex-start', marginTop: -6 }} onClick={() => setAllLangs(true)}>
+          Остальные языки
+        </button>
+      )}
+
+      {/* ---------- GitLab ---------- */}
+      <div className="row" style={{ marginTop: 8 }}>
         <HostBadge host="gitlab" size={26} />
         <h3 className="section-title" style={{ margin: 0 }}>GitLab</h3>
       </div>
@@ -130,6 +255,7 @@ export function SettingsModal({ settings, onSaved, onClose }: Props) {
         Доверять самоподписанному сертификату этого GitLab
       </label>
 
+      {/* ---------- GitHub ---------- */}
       <div className="row" style={{ marginTop: 8 }}>
         <HostBadge host="github" size={26} />
         <h3 className="section-title" style={{ margin: 0 }}>GitHub</h3>
@@ -137,6 +263,7 @@ export function SettingsModal({ settings, onSaved, onClose }: Props) {
       {tokenBlock('github', s.github.hasToken, ghToken, setGhToken)}
       <span className="field-hint">Без токена публичные репы тоже работают, но лимит — 60 запросов в час.</span>
 
+      {/* ---------- IDE ---------- */}
       <h3 className="section-title" style={{ marginTop: 8 }}>IDE</h3>
       {s.ides.map((i) => (
         <div className="field" key={i.id}>
@@ -158,7 +285,7 @@ export function SettingsModal({ settings, onSaved, onClose }: Props) {
       <span className="field-hint">Пустое поле — путь ищется автоматически.</span>
 
       {error && (
-        <div className="error-box">
+        <div className="error-box" ref={errorRef}>
           <IconWarn size={18} />
           <span>{error}</span>
         </div>

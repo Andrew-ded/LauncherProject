@@ -6,6 +6,7 @@ import type { LauncherApi } from '@shared/types'
 const api: LauncherApi = {
   listProjects: () => ipcRenderer.invoke('projects:list'),
   addProject: (input) => ipcRenderer.invoke('projects:add', input),
+  addProjects: (inputs) => ipcRenderer.invoke('projects:addMany', inputs),
   updateProject: (id, input) => ipcRenderer.invoke('projects:update', id, input),
   deleteProject: (id) => ipcRenderer.invoke('projects:delete', id),
   setNotes: (id, notes) => ipcRenderer.invoke('projects:notes', id, notes),
@@ -13,6 +14,7 @@ const api: LauncherApi = {
   pickFolder: () => ipcRenderer.invoke('dialog:folder'),
   pickImage: () => ipcRenderer.invoke('dialog:image'),
   detect: (folder) => ipcRenderer.invoke('detect', folder),
+  scanRoots: (roots) => ipcRenderer.invoke('scan:roots', roots),
   gitState: (id) => ipcRenderer.invoke('git:state', id),
   gitStates: () => ipcRenderer.invoke('git:states'),
 
