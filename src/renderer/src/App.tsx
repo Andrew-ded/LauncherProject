@@ -1,0 +1,342 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ContextAction, GitState, IdeId, Project, RepoActivity, SettingsView } from '@shared/types'
+import { IDES } from '@shared/meta'
+import { ProjectCard } from './components/ProjectCard'
+import { RepoModal } from './components/RepoModal'
+import { NotesModal } from './components/NotesModal'
+import { ProjectModal, type ProjectModalMode } from './components/ProjectModal'
+import { SettingsModal } from './components/SettingsModal'
+import { IconPlus, IconSearch, IconSettings } from './components/Icons'
+
+type ModalState =
+  | { type: 'repo'; id: string }
+  | { type: 'notes'; id: string }
+  | { type: 'project'; mode: ProjectModalMode }
+  | { type: 'settings' }
+  | null
+
+interface Toast {
+  text: string
+  error?: boolean
+}
+
+const api = window.api
+const ACTIVITY_TTL_MS = 3 * 60 * 1000
+const PARALLEL = 4
+
+export function App() {
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loaded, setLoaded] = useState(false)
+  const [git, setGit] = useState<Record<string, GitState>>({})
+  const [activity, setActivity] = useState<Record<string, RepoActivity>>({})
+  const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set())
+  const [settings, setSettings] = useState<SettingsView>()
+  const [q, setQ] = useState('')
+  const [modal, setModal] = useState<ModalState>(null)
+  const [toast, setToast] = useState<Toast | null>(null)
+  const [launching, setLaunching] = useState<string | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const toastTimer = useRef<number | undefined>(undefined)
+  const lastActivityAt = useRef(0)
+  const projectsRef = useRef(projects)
+  projectsRef.current = projects
+
+  const showToast = useCallback((text: string, error = false) => {
+    setToast({ text, error })
+    window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(null), error ? 5000 : 2200)
+  }, [])
+
+  // ---------- Загрузка данных ----------
+
+  /** Тянет PR/Issue для проектов с репозиторием, не больше PARALLEL запросов одновременно. */
+  const refreshActivity = useCallback(async (ids?: string[]) => {
+    const targets = (ids ?? projectsRef.current.filter((p) => p.repo).map((p) => p.id)).slice()
+    if (!targets.length) return
+    lastActivityAt.current = Date.now()
+    setLoadingIds((s) => new Set([...s, ...targets]))
+    const worker = async (): Promise<void> => {
+      for (let id = targets.shift(); id; id = targets.shift()) {
+        try {
+          const a = await api.repoActivity(id)
+          setActivity((m) => ({ ...m, [id!]: a }))
+        } catch {
+          /* проект успели удалить или отвязать от репы */
+        } finally {
+          setLoadingIds((s) => {
+            const n = new Set(s)
+            n.delete(id!)
+            return n
+          })
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: PARALLEL }, worker))
+  }, [])
+
+  const refreshGit = useCallback(async () => {
+    setGit(await api.gitStates())
+  }, [])
+
+  useEffect(() => {
+    void (async () => {
+      const [list, s] = await Promise.all([api.listProjects(), api.getSettings()])
+      setProjects(list)
+      projectsRef.current = list
+      setSettings(s)
+      setLoaded(true)
+      await refreshGit()
+      await refreshActivity()
+    })()
+  }, [refreshActivity, refreshGit])
+
+  // Вернулся в окно — обновляем ветки (дёшево) и PR/Issue, если давно не обновляли
+  useEffect(() => {
+    const onFocus = (): void => {
+      void refreshGit()
+      if (Date.now() - lastActivityAt.current > ACTIVITY_TTL_MS) void refreshActivity()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshActivity, refreshGit])
+
+  // ---------- Действия ----------
+
+  const openInIde = useCallback(
+    async (p: Project, ide?: IdeId) => {
+      setLaunching(p.id)
+      const r = await api.openInIde(p.id, ide)
+      setTimeout(() => setLaunching((cur) => (cur === p.id ? null : cur)), 600)
+      if (r.ok) showToast(`Открываю ${p.name} в ${IDES[ide ?? p.ide].name}…`)
+      else showToast(r.error ?? 'Не удалось открыть', true)
+    },
+    [showToast]
+  )
+
+  const openFolder = async (p: Project): Promise<void> => {
+    const r = await api.openFolder(p.id)
+    if (!r.ok) showToast(r.error ?? 'Не удалось открыть папку', true)
+  }
+
+  const removeProject = async (p: Project): Promise<void> => {
+    if (!window.confirm(`Убрать «${p.name}» из лаунчера? Папка на диске останется как есть.`)) return
+    await api.deleteProject(p.id)
+    setProjects((list) => list.filter((x) => x.id !== p.id))
+    showToast(`«${p.name}» убран`)
+  }
+
+  const onContext = async (p: Project): Promise<void> => {
+    const action: ContextAction | null = await api.showContextMenu(p.id)
+    if (!action) return
+    if (action === 'edit') setModal({ type: 'project', mode: { kind: 'edit', project: p } })
+    else if (action === 'delete') void removeProject(p)
+    else if (action === 'copyPath') showToast('Путь скопирован')
+    else if (action === 'openTerminal') {
+      const r = await api.openTerminal(p.id)
+      if (!r.ok) showToast(r.error ?? 'Не удалось открыть терминал', true)
+    } else if (action.startsWith('ide:')) void openInIde(p, action.slice(4) as IdeId)
+  }
+
+  const onProjectSaved = (saved: Project): void => {
+    setProjects((list) => {
+      const exists = list.some((x) => x.id === saved.id)
+      const next = exists ? list.map((x) => (x.id === saved.id ? saved : x)) : [...list, saved]
+      projectsRef.current = next
+      return next
+    })
+    setModal(null)
+    void api.gitState(saved.id).then((g) => setGit((m) => ({ ...m, [saved.id]: g })))
+    if (saved.repo) void refreshActivity([saved.id])
+    else setActivity((m) => {
+      const n = { ...m }
+      delete n[saved.id]
+      return n
+    })
+  }
+
+  // ---------- Поиск и клавиатура ----------
+
+  const visible = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    return projects
+      .filter((p) => !needle || `${p.name} ${p.path} ${p.repo?.fullPath ?? ''}`.toLowerCase().includes(needle))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+  }, [projects, q])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (modal) return
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'f' || e.code === 'KeyK' || e.code === 'KeyF')) {
+        e.preventDefault()
+        searchRef.current?.focus()
+        searchRef.current?.select()
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.code === 'KeyN')) {
+        e.preventDefault()
+        setModal({ type: 'project', mode: { kind: 'new' } })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [modal])
+
+  // ---------- Перетаскивание папки в окно ----------
+
+  const dragDepth = useRef(0)
+  useEffect(() => {
+    const hasFiles = (e: DragEvent): boolean => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')
+    const enter = (e: DragEvent): void => {
+      if (!hasFiles(e) || modal) return
+      dragDepth.current++
+      setDragging(true)
+    }
+    const leave = (): void => {
+      dragDepth.current = Math.max(0, dragDepth.current - 1)
+      if (!dragDepth.current) setDragging(false)
+    }
+    const over = (e: DragEvent): void => {
+      if (hasFiles(e)) e.preventDefault()
+    }
+    const drop = (e: DragEvent): void => {
+      e.preventDefault()
+      dragDepth.current = 0
+      setDragging(false)
+      if (modal) return
+      const file = e.dataTransfer?.files[0]
+      if (!file) return
+      const path = api.pathForFile(file)
+      if (path) setModal({ type: 'project', mode: { kind: 'new', path } })
+    }
+    window.addEventListener('dragenter', enter)
+    window.addEventListener('dragleave', leave)
+    window.addEventListener('dragover', over)
+    window.addEventListener('drop', drop)
+    return () => {
+      window.removeEventListener('dragenter', enter)
+      window.removeEventListener('dragleave', leave)
+      window.removeEventListener('dragover', over)
+      window.removeEventListener('drop', drop)
+    }
+  }, [modal])
+
+  // ---------- Разметка ----------
+
+  const current = modal && 'id' in modal ? projects.find((p) => p.id === modal.id) : undefined
+
+  return (
+    <div className={`app${dragging ? ' dragging' : ''}`}>
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-mark">П</div>
+          <span className="brand-name">Проекты</span>
+        </div>
+        <label className="search">
+          <IconSearch size={18} />
+          <span className="sr-only">Поиск проекта</span>
+          <input
+            ref={searchRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Название, путь или репозиторий…"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && visible[0]) void openInIde(visible[0])
+              if (e.key === 'Escape') setQ('')
+            }}
+          />
+          <span className="kbd">Ctrl K</span>
+        </label>
+        <div className="topbar-actions">
+          <button type="button" className="icon-btn lg" aria-label="Настройки" title="Настройки" onClick={() => setModal({ type: 'settings' })}>
+            <IconSettings size={19} />
+          </button>
+          <button type="button" className="btn btn-dark" onClick={() => setModal({ type: 'project', mode: { kind: 'new' } })}>
+            <IconPlus size={16} />
+            Добавить проект
+          </button>
+        </div>
+      </header>
+
+      <main className="content">
+        {loaded && projects.length === 0 ? (
+          <div className="empty">
+            <h2>Здесь пока пусто</h2>
+            <span>Перетащи папку проекта в окно или добавь её кнопкой — язык, IDE и репозиторий подтянутся сами.</span>
+            <button type="button" className="btn btn-dark" onClick={() => setModal({ type: 'project', mode: { kind: 'new' } })}>
+              <IconPlus size={16} />
+              Добавить проект
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="content-head">
+              <h1>{q ? 'Найдено' : 'Все проекты'}</h1>
+              <span className="muted">{visible.length}</span>
+              <span className="hint">Клик — открыть в IDE · правая кнопка — ещё действия · Enter в поиске — открыть первый</span>
+            </div>
+            <div className="grid">
+              {visible.map((p) => (
+                <ProjectCard
+                  key={p.id}
+                  project={p}
+                  git={git[p.id]}
+                  activity={activity[p.id]}
+                  loading={loadingIds.has(p.id)}
+                  launching={launching === p.id}
+                  onOpen={() => void openInIde(p)}
+                  onRepo={() => setModal({ type: 'repo', id: p.id })}
+                  onNotes={() => setModal({ type: 'notes', id: p.id })}
+                  onFolder={() => void openFolder(p)}
+                  onContext={() => void onContext(p)}
+                />
+              ))}
+            </div>
+            {loaded && visible.length === 0 && <div className="placeholder">Ничего не нашлось.</div>}
+          </>
+        )}
+      </main>
+
+      {modal?.type === 'repo' && current?.repo && (
+        <RepoModal
+          project={current}
+          git={git[current.id]}
+          activity={activity[current.id]}
+          loading={loadingIds.has(current.id)}
+          onRefresh={() => void refreshActivity([current.id])}
+          onOpenSettings={() => setModal({ type: 'settings' })}
+          onClose={() => setModal(null)}
+        />
+      )}
+
+      {modal?.type === 'notes' && current && (
+        <NotesModal
+          project={current}
+          onToast={showToast}
+          onSaved={(notes) => setProjects((list) => list.map((x) => (x.id === current.id ? { ...x, notes } : x)))}
+          onClose={() => setModal(null)}
+        />
+      )}
+
+      {modal?.type === 'project' && (
+        <ProjectModal mode={modal.mode} settings={settings} onSaved={onProjectSaved} onClose={() => setModal(null)} />
+      )}
+
+      {modal?.type === 'settings' && settings && (
+        <SettingsModal
+          settings={settings}
+          onSaved={(s) => {
+            setSettings(s)
+            void refreshActivity()
+          }}
+          onClose={() => setModal(null)}
+        />
+      )}
+
+      {toast && (
+        <div className={`toast${toast.error ? ' error' : ''}`} role="status">
+          {toast.text}
+        </div>
+      )}
+    </div>
+  )
+}
+

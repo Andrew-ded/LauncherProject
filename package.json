@@ -1,0 +1,33 @@
+{
+  "name": "project-launcher",
+  "productName": "Project Launcher",
+  "version": "0.1.0",
+  "description": "Лаунчер рабочих проектов: открыть в нужной IDE, заметки, ветка, PR и Issue из GitHub/GitLab",
+  "private": true,
+  "main": "./out/main/index.js",
+  "author": "Andrei Rumyantsev",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "dist": "npm run typecheck && electron-vite build && electron-builder --win portable --publish never"
+  },
+  "devDependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.5"
+  }
+}
